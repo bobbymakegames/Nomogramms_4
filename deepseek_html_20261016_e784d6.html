@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Интерактивные линейки для графика</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .instructions {
+            margin-bottom: 20px;
+            text-align: center;
+            color: #333;
+            background: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-width: 800px;
+        }
+
+        #workspace {
+            position: relative;
+            display: inline-block;
+            user-select: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            background: white;
+            line-height: 0; /* Убирает отступ снизу изображения */
+        }
+
+        #graph-image {
+            max-width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* Общие стили для линеек */
+        .ruler {
+            position: absolute;
+            z-index: 10;
+            pointer-events: auto;
+        }
+
+        /* Вертикальная линейка (измеряет X) */
+        #v-ruler {
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background-color: rgba(255, 0, 0, 0.7);
+            cursor: ew-resize;
+            left: 50%; /* Начальное положение */
+            transform: translateX(-50%);
+        }
+
+        /* Горизонтальная линейка (измеряет Y) */
+        #h-ruler {
+            left: 0;
+            right: 0;
+            height: 2px;
+            background-color: rgba(0, 0, 255, 0.7);
+            cursor: ns-resize;
+            top: 50%; /* Начальное положение */
+            transform: translateY(-50%);
+        }
+
+        /* Зона захвата для удобства (невидимая) */
+        .handle {
+            position: absolute;
+            background: transparent;
+        }
+
+        #v-handle {
+            top: 0;
+            bottom: 0;
+            left: -10px;
+            right: -10px;
+        }
+
+        #h-handle {
+            left: 0;
+            right: 0;
+            top: -10px;
+            bottom: -10px;
+        }
+
+        /* Метки со значениями */
+        .label {
+            position: absolute;
+            background-color: rgba(255, 255, 255, 0.9);
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 14px;
+            font-weight: bold;
+            font-family: monospace;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            white-space: nowrap;
+            pointer-events: none;
+            line-height: 1.2;
+        }
+
+        /* Позиционирование метки для вертикальной линейки (X) */
+        #v-label {
+            top: 10px;
+            left: 15px;
+            color: #d32f2f;
+        }
+
+        /* Позиционирование метки для горизонтальной линейки (Y) */
+        #h-label {
+            top: 15px;
+            right: 10px;
+            color: #1976d2;
+        }
+
+        /* Подсветка активной линейки */
+        .ruler.active {
+            box-shadow: 0 0 8px rgba(0,0,0,0.5);
+            z-index: 20;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="instructions">
+        <h3>Интерактивное измерение графика</h3>
+        <p>Перетаскивайте <b style="color:red;">красную</b> линию влево/вправо для измерения оси X, и <b style="color:blue;">синюю</b> линию вверх/вниз для измерения оси Y.</p>
+        <p>Точность отображения: 0.001 (тысячные).</p>
+    </div>
+
+    <div id="workspace">
+        <!-- Убедитесь, что изображение называется graph.jpg и лежит рядом с html-файлом -->
+        <img id="graph-image" src="graph.jpg" alt="График">
+        
+        <!-- Вертикальная линейка (ось X) -->
+        <div id="v-ruler" class="ruler">
+            <div id="v-handle" class="handle"></div>
+            <div id="v-label" class="label">0.000</div>
+        </div>
+
+        <!-- Горизонтальная линейка (ось Y) -->
+        <div id="h-ruler" class="ruler">
+            <div id="h-handle" class="handle"></div>
+            <div id="h-label" class="label">0.000</div>
+        </div>
+    </div>
+
+    <script>
+        // === НАСТРОЙКИ КАЛИБРОВКИ ===
+        // Эти значения определяют, где именно на изображении находятся края сетки графика.
+        // Значения указаны в процентах от ширины/высоты всего изображения (от 0.0 до 1.0).
+        // Если линейки показывают неточные значения на краях, немного измените эти числа.
+        
+        const X_START_RATIO = 0.0828; // Где начинается 0.0 по горизонтали (слева)
+        const X_END_RATIO = 0.950;   // Где заканчивается 3.0 по горизонтали (справа)
+        
+        const Y_START_RATIO = 0.035; // Где находится верхняя граница 0.9 (сверху)
+        const Y_END_RATIO = 0.944;   // Где находится нижняя граница 0.0 (снизу)
+
+        // Максимальные значения шкал (из подписей на изображении)
+        const X_MAX_VALUE = 3.0;
+        const Y_MAX_VALUE = 0.9;
+        // =============================
+
+        const workspace = document.getElementById('workspace');
+        const img = document.getElementById('graph-image');
+        const vRuler = document.getElementById('v-ruler');
+        const hRuler = document.getElementById('h-ruler');
+        const vLabel = document.getElementById('v-label');
+        const hLabel = document.getElementById('h-label');
+
+        let isDraggingV = false;
+        let isDraggingH = false;
+
+        // Инициализация: установка линеек в начальное положение (например, по центру)
+        function initRulers() {
+            vRuler.style.left = '50%';
+            hRuler.style.top = '50%';
+            updateValues();
+        }
+
+        // Функция пересчета координат в значения
+        function updateValues() {
+            if (!img.complete) return;
+
+            const wsRect = workspace.getBoundingClientRect();
+
+            // --- Расчет значения X (Вертикальная линейка) ---
+            // Получаем текущую позицию линейки в пикселях относительно рабочей области
+            const currentXPixels = vRuler.getBoundingClientRect().left - wsRect.left;
+            
+            // Определяем пиксельные координаты начала и конца графика
+            const graphStartXPixels = wsRect.width * X_START_RATIO;
+            const graphEndXPixels = wsRect.width * X_END_RATIO;
+            const graphWidthPixels = graphEndXPixels - graphStartXPixels;
+
+            // Линейная интерполяция
+            let xVal = ((currentXPixels - graphStartXPixels) / graphWidthPixels) * X_MAX_VALUE;
+            
+            // Ограничиваем вывод, чтобы не уходить в минус или выше максимума при сильном смещении
+            // (опционально, можно убрать ограничение, если нужно видеть значения за пределами графика)
+            // xVal = Math.max(0, Math.min(X_MAX_VALUE, xVal)); 
+            
+            vLabel.textContent = xVal.toFixed(3);
+
+
+            // --- Расчет значения Y (Горизонтальная линейка) ---
+            // Получаем текущую позицию линейки в пикселях
+            const currentYPixels = hRuler.getBoundingClientRect().top - wsRect.top;
+            
+            // Определяем пиксельные координаты начала (верх, 0.9) и конца (низ, 0.0) графика
+            const graphStartYPixels = wsRect.height * Y_START_RATIO;
+            const graphEndYPixels = wsRect.height * Y_END_RATIO;
+            const graphHeightPixels = graphEndYPixels - graphStartYPixels;
+
+            // Линейная интерполяция (ось Y инвертирована: сверху максимум, снизу 0)
+            // currentYPixels - graphStartYPixels даст расстояние от верха графика
+            let yVal = Y_MAX_VALUE - (((currentYPixels - graphStartYPixels) / graphHeightPixels) * Y_MAX_VALUE);
+            
+            // yVal = Math.max(0, Math.min(Y_MAX_VALUE, yVal));
+
+            hLabel.textContent = yVal.toFixed(3);
+        }
+
+        // --- Обработчики событий перетаскивания ---
+
+        // Нажатие мыши на вертикальную линейку
+        document.getElementById('v-handle').addEventListener('pointerdown', (e) => {
+            isDraggingV = true;
+            vRuler.classList.add('active');
+            e.target.setPointerCapture(e.pointerId); // Захватываем указатель
+        });
+
+        // Нажатие мыши на горизонтальную линейку
+        document.getElementById('h-handle').addEventListener('pointerdown', (e) => {
+            isDraggingH = true;
+            hRuler.classList.add('active');
+            e.target.setPointerCapture(e.pointerId);
+        });
+
+        // Отпускание мыши
+        document.addEventListener('pointerup', (e) => {
+            isDraggingV = false;
+            isDraggingH = false;
+            vRuler.classList.remove('active');
+            hRuler.classList.remove('active');
+        });
+
+        // Движение мыши
+        document.addEventListener('pointermove', (e) => {
+            if (!isDraggingV && !isDraggingH) return;
+
+            const wsRect = workspace.getBoundingClientRect();
+            
+            if (isDraggingV) {
+                // Вычисляем позицию относительно левого края рабочей области
+                let x = e.clientX - wsRect.left;
+                // Преобразуем в проценты и ограничиваем пределами изображения
+                let percentX = (x / wsRect.width) * 100;
+                percentX = Math.max(0, Math.min(100, percentX));
+                vRuler.style.left = `${percentX}%`;
+            }
+
+            if (isDraggingH) {
+                // Вычисляем позицию относительно верхнего края рабочей области
+                let y = e.clientY - wsRect.top;
+                // Преобразуем в проценты и ограничиваем пределами изображения
+                let percentY = (y / wsRect.height) * 100;
+                percentY = Math.max(0, Math.min(100, percentY));
+                hRuler.style.top = `${percentY}%`;
+            }
+
+            // Пересчитываем значения при каждом движении
+            updateValues();
+        });
+
+        // Пересчет при изменении размера окна (чтобы значения оставались верными)
+        window.addEventListener('resize', updateValues);
+
+        // Инициализация после загрузки картинки
+        img.addEventListener('load', initRulers);
+        // Если картинка уже загружена из кэша
+        if (img.complete) {
+            initRulers();
+        }
+    </script>
+</body>
+</html>
